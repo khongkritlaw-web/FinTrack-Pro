@@ -29,11 +29,80 @@ import {
   Info
 } from 'lucide-react';
 
+const SEED_EXPENSES: Expense[] = [
+  {
+    id: "seed-1",
+    date: "2026-06-01",
+    title: "ค่าเช่าคอนโดมิเนียม ประจำเดือนมิถุนายน",
+    category: "ค่าที่พัก / ค่าบ้าน",
+    amount: 12000,
+    status: "ชำระแล้ว",
+    payDate: "2026-06-01",
+    receiptUrl: "",
+    notes: "โอนผ่านแอปธนาคารเรียบร้อย"
+  },
+  {
+    id: "seed-2",
+    date: "2026-06-15",
+    title: "ค่าน้ำ + ค่าไฟ คอนโด",
+    category: "ค่าน้ำ / ค่าไฟ",
+    amount: 3450,
+    status: "ชำระแล้ว",
+    payDate: "2026-06-16",
+    receiptUrl: "",
+    notes: "ค่าไฟเดือนนี้ค่อนข้างสูงเนื่องจากเปิดแอร์บ่อย"
+  },
+  {
+    id: "seed-3",
+    date: "2026-06-20",
+    title: "ซื้อของกินของใช้เข้าบ้าน (Lotus's)",
+    category: "ช้อปปิ้ง / ของใช้",
+    amount: 2150,
+    status: "ชำระแล้ว",
+    payDate: "2026-06-20",
+    receiptUrl: "",
+    notes: "ตุนอาหารแห้งและน้ำดื่มสำหรับครึ่งเดือนหลัง"
+  },
+  {
+    id: "seed-4",
+    date: "2026-06-22",
+    title: "เติมน้ำมันรถยนต์ประจำสัปดาห์",
+    category: "ค่าเดินทาง / น้ำมันรถ",
+    amount: 1200,
+    status: "ชำระแล้ว",
+    payDate: "2026-06-22",
+    receiptUrl: "",
+    notes: "ปั๊ม Shell คาร์บอนต่ำ"
+  },
+  {
+    id: "seed-5",
+    date: "2026-06-23",
+    title: "ค่าแพ็กเกจอินเทอร์เน็ตบ้านและมือถือ AIS",
+    category: "อินเทอร์เน็ต / โทรศัพท์",
+    amount: 899,
+    status: "ยังไม่ชำระ",
+    payDate: "",
+    receiptUrl: "",
+    notes: "กำหนดชำระทุกวันที่ 28 ของเดือน"
+  },
+  {
+    id: "seed-6",
+    date: "2026-06-24",
+    title: "ค่าบริการตรวจสุขภาพประจำปี",
+    category: "สุขภาพ / ยา",
+    amount: 4500,
+    status: "ยังไม่ชำระ",
+    payDate: "",
+    receiptUrl: "",
+    notes: "รอคิวตรวจวันอาทิตย์นี้และชำระที่เคาน์เตอร์โรงพยาบาล"
+  }
+];
+
 export default function App() {
   // Auth state
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [needsAuth, setNeedsAuth] = useState(true);
+  const [needsAuth, setNeedsAuth] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Spreadsheet state
@@ -67,7 +136,9 @@ export default function App() {
         setNeedsAuth(false);
       },
       () => {
-        setNeedsAuth(true);
+        setUser(null);
+        setToken(null);
+        setNeedsAuth(false); // Enable Guest / Local storage mode immediately
       }
     );
   }, []);
@@ -97,9 +168,23 @@ export default function App() {
     }
   }, []);
 
-  // Trigger sync on login or spreadsheet ID change
+  // Load from LocalStorage if in guest mode, otherwise sync with Google Sheet
   useEffect(() => {
-    if (token && spreadsheetId) {
+    if (!token) {
+      // Local Mode
+      const stored = localStorage.getItem('fintrack_expenses');
+      if (stored) {
+        try {
+          setExpenses(JSON.parse(stored));
+        } catch (e) {
+          setExpenses(SEED_EXPENSES);
+        }
+      } else {
+        setExpenses(SEED_EXPENSES);
+        localStorage.setItem('fintrack_expenses', JSON.stringify(SEED_EXPENSES));
+      }
+    } else if (spreadsheetId) {
+      // Cloud Google Sheets Mode
       syncWithGoogleSheet(token, spreadsheetId);
     }
   }, [token, spreadsheetId, syncWithGoogleSheet]);
@@ -128,46 +213,87 @@ export default function App() {
       await googleSignOut();
       setUser(null);
       setToken(null);
-      setNeedsAuth(true);
-      setExpenses([]);
+      setNeedsAuth(false); // Return to local mode instead of blocking
       setSheetMetadata(null);
+      // Reload local storage data
+      const stored = localStorage.getItem('fintrack_expenses');
+      if (stored) {
+        try {
+          setExpenses(JSON.parse(stored));
+        } catch (e) {
+          setExpenses(SEED_EXPENSES);
+        }
+      } else {
+        setExpenses(SEED_EXPENSES);
+      }
     }
   };
 
   // Create or Update Expense Row
   const handleSaveExpense = async (expenseData: Omit<Expense, 'id' | 'rowNumber'> & { id?: string; rowNumber?: number }) => {
-    if (!token || !sheetMetadata) {
-      setAppError('กรุณาเข้าสู่ระบบก่อนดำเนินการ');
-      return;
-    }
-
     setIsLoading(true);
     try {
-      if (expenseData.id && expenseData.rowNumber) {
-        // Update operation
-        const updatedExpense: Expense = {
-          id: expenseData.id,
-          rowNumber: expenseData.rowNumber,
-          date: expenseData.date,
-          title: expenseData.title,
-          category: expenseData.category,
-          amount: expenseData.amount,
-          status: expenseData.status,
-          payDate: expenseData.payDate,
-          receiptUrl: expenseData.receiptUrl,
-          notes: expenseData.notes
-        };
-
-        await updateExpenseRow(spreadsheetId, sheetMetadata.title, updatedExpense, token);
-        setSuccessToast('อัปเดตข้อมูลค่าใช้จ่ายเรียบร้อยแล้ว!');
+      if (!token) {
+        // LOCAL GUEST MODE
+        let updatedExpenses: Expense[] = [];
+        if (expenseData.id) {
+          // Update
+          updatedExpenses = expenses.map(exp => 
+            exp.id === expenseData.id 
+              ? { ...exp, ...expenseData } as Expense
+              : exp
+          );
+          setSuccessToast('อัปเดตข้อมูลค่าใช้จ่ายเรียบร้อยแล้ว!');
+        } else {
+          // Add new
+          const newExpense: Expense = {
+            id: 'local-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+            date: expenseData.date,
+            title: expenseData.title,
+            category: expenseData.category,
+            amount: expenseData.amount,
+            status: expenseData.status,
+            payDate: expenseData.payDate,
+            receiptUrl: expenseData.receiptUrl,
+            notes: expenseData.notes,
+            rowNumber: expenses.length + 2 // mock row number for safety
+          };
+          updatedExpenses = [newExpense, ...expenses];
+          setSuccessToast('เพิ่มรายการค่าใช้จ่ายใหม่เรียบร้อยแล้ว!');
+        }
+        setExpenses(updatedExpenses);
+        localStorage.setItem('fintrack_expenses', JSON.stringify(updatedExpenses));
       } else {
-        // Add new operation
-        await addExpenseRow(spreadsheetId, sheetMetadata.title, expenseData, token);
-        setSuccessToast('เพิ่มรายการค่าใช้จ่ายใหม่เรียบร้อยแล้ว!');
-      }
+        // GOOGLE SHEET CLOUD MODE
+        if (!sheetMetadata) {
+          throw new Error('ไม่พบข้อมูลโครงสร้าง Sheet ปลายทาง');
+        }
+        if (expenseData.id && expenseData.rowNumber) {
+          // Update operation
+          const updatedExpense: Expense = {
+            id: expenseData.id,
+            rowNumber: expenseData.rowNumber,
+            date: expenseData.date,
+            title: expenseData.title,
+            category: expenseData.category,
+            amount: expenseData.amount,
+            status: expenseData.status,
+            payDate: expenseData.payDate,
+            receiptUrl: expenseData.receiptUrl,
+            notes: expenseData.notes
+          };
 
-      // Re-fetch data to sync
-      await syncWithGoogleSheet(token, spreadsheetId);
+          await updateExpenseRow(spreadsheetId, sheetMetadata.title, updatedExpense, token);
+          setSuccessToast('อัปเดตข้อมูลค่าใช้จ่ายเรียบร้อยแล้ว!');
+        } else {
+          // Add new operation
+          await addExpenseRow(spreadsheetId, sheetMetadata.title, expenseData, token);
+          setSuccessToast('เพิ่มรายการค่าใช้จ่ายใหม่เรียบร้อยแล้ว!');
+        }
+
+        // Re-fetch data to sync
+        await syncWithGoogleSheet(token, spreadsheetId);
+      }
     } catch (err: any) {
       console.error('Save failed:', err);
       throw err; // Form component will handle error message display
@@ -178,21 +304,28 @@ export default function App() {
 
   // Delete Expense Row (User Confirmation Mandatory)
   const handleDeleteExpense = async (expense: Expense) => {
-    if (!token || !sheetMetadata) return;
-
-    // MANDATORY explicit confirmation per workspace integration skill rules
     const confirmed = window.confirm(
-      `คุณต้องการลบรายการ "${expense.title}" (จำนวนเงิน ${expense.amount.toLocaleString()} บาท) ออกจาก Google Sheets ใช่หรือไม่?\nการดำเนินการนี้ไม่สามารถย้อนกลับได้`
+      `คุณต้องการลบรายการ "${expense.title}" (จำนวนเงิน ${expense.amount.toLocaleString()} บาท) ใช่หรือไม่?\nการดำเนินการนี้ไม่สามารถย้อนกลับได้`
     );
 
     if (!confirmed) return;
 
     setIsLoading(true);
     try {
-      if (expense.rowNumber) {
-        await deleteExpenseRow(spreadsheetId, sheetMetadata.sheetId, expense.rowNumber, token);
+      if (!token) {
+        // LOCAL GUEST MODE
+        const updatedExpenses = expenses.filter(exp => exp.id !== expense.id);
+        setExpenses(updatedExpenses);
+        localStorage.setItem('fintrack_expenses', JSON.stringify(updatedExpenses));
         setSuccessToast('ลบรายการค่าใช้จ่ายสำเร็จ!');
-        await syncWithGoogleSheet(token, spreadsheetId);
+      } else {
+        // GOOGLE SHEET CLOUD MODE
+        if (!sheetMetadata) return;
+        if (expense.rowNumber) {
+          await deleteExpenseRow(spreadsheetId, sheetMetadata.sheetId, expense.rowNumber, token);
+          setSuccessToast('ลบรายการค่าใช้จ่ายสำเร็จ!');
+          await syncWithGoogleSheet(token, spreadsheetId);
+        }
       }
     } catch (err: any) {
       console.error('Delete failed:', err);
@@ -355,28 +488,58 @@ export default function App() {
 
             {/* User Profile */}
             <div className="flex items-center gap-3 pl-3 border-l border-[#27272a]">
-              {user?.photoURL && (
-                <img
-                  src={user.photoURL}
-                  alt={user.displayName || 'User'}
-                  className="w-9 h-9 rounded-full border border-[#27272a] referrerPolicy=no-referrer"
-                />
+              {!token ? (
+                <>
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                    <Database size={16} />
+                  </div>
+                  <div className="hidden sm:block text-left">
+                    <p className="text-xs font-bold text-emerald-400 max-w-[120px] truncate flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      โหมดในเครื่อง
+                    </p>
+                    <p className="text-[10px] text-zinc-500 truncate max-w-[120px]">
+                      ข้อมูลเซฟในบราวเซอร์
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleLogin}
+                    disabled={isLoggingIn}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#0d0d0f] text-[11px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {isLoggingIn ? 'กำลังเชื่อมต่อ...' : 'เชื่อมต่อ Sheets'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {user?.photoURL ? (
+                    <img
+                      src={user.photoURL}
+                      alt={user.displayName || 'User'}
+                      className="w-9 h-9 rounded-full border border-[#27272a] referrerPolicy=no-referrer"
+                    />
+                  ) : (
+                    <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 font-bold text-xs">
+                      {user?.displayName?.substring(0, 1) || 'U'}
+                    </div>
+                  )}
+                  <div className="hidden sm:block text-left">
+                    <p className="text-xs font-bold text-white max-w-[120px] truncate">
+                      {user?.displayName || 'ผู้ใช้งาน'}
+                    </p>
+                    <p className="text-[10px] text-zinc-500 truncate max-w-[120px]">
+                      {user?.email}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all cursor-pointer"
+                    title="ออกจากระบบ"
+                  >
+                    <LogOut size={16} />
+                  </button>
+                </>
               )}
-              <div className="hidden sm:block text-left">
-                <p className="text-xs font-bold text-white max-w-[120px] truncate">
-                  {user?.displayName || 'ผู้ใช้งาน'}
-                </p>
-                <p className="text-[10px] text-zinc-500 truncate max-w-[120px]">
-                  {user?.email}
-                </p>
-              </div>
-              <button
-                onClick={handleLogout}
-                className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all cursor-pointer"
-                title="ออกจากระบบ"
-              >
-                <LogOut size={16} />
-              </button>
             </div>
 
           </div>
@@ -487,10 +650,17 @@ export default function App() {
         <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl flex items-start gap-3 shadow-md shadow-emerald-500/2">
           <Info className="shrink-0 mt-0.5 text-emerald-400" size={18} />
           <div className="text-xs leading-relaxed text-zinc-300">
-            <strong>คำแนะนำ:</strong> ค่าใช้จ่ายทั้งหมดจะจัดเก็บในแถวของชีท 
-            <strong className="text-emerald-400"> "{sheetMetadata?.title || 'Expense_Sheet'}" </strong> 
-            โดยอัตโนมัติ สลิปหลักฐานจะถูกเก็บลงในโฟลเดอร์ <strong>"Expense_Receipts"</strong> บน Google Drive ของคุณ 
-            และสร้างลิงก์สำหรับตรวจสอบเพื่อให้แชร์ได้ง่ายขึ้น
+            {!token ? (
+              <>
+                <strong>คำแนะนำ:</strong> ขณะนี้คุณกำลังใช้ <strong className="text-emerald-400">"โหมดบันทึกข้อมูลในเครื่อง"</strong> ข้อมูลค่าใช้จ่ายและรูปภาพสลิปทั้งหมดจะถูกบันทึกและประมวลผลภายในเว็บบราวเซอร์ของคุณโดยอัตโนมัติอย่างปลอดภัย (ไม่ต้องผูกกับ Google Sheet) คุณสามารถคลิกปุ่ม <strong>"เชื่อมต่อ Sheets"</strong> ด้านบนเพื่อเชื่อมโยงและซิงค์ข้อมูลกับ Google Sheet และ Google Drive ของคุณได้ตลอดเวลา!
+              </>
+            ) : (
+              <>
+                <strong>คำแนะนำ:</strong> ขณะนี้เชื่อมต่อสำเร็จแล้ว! รายการค่าใช้จ่ายทั้งหมดจะจัดเก็บในแถวของชีท 
+                <strong className="text-emerald-400"> "{sheetMetadata?.title || 'Expense_Sheet'}" </strong> 
+                โดยอัตโนมัติ สลิปหลักฐานจะถูกเก็บลงในโฟลเดอร์ <strong>"Expense_Receipts"</strong> บน Google Drive ของคุณ และสร้างลิงก์สำหรับตรวจสอบเพื่อให้แชร์ได้ง่ายขึ้น
+              </>
+            )}
           </div>
         </div>
 

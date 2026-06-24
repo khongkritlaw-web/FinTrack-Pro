@@ -77,13 +77,47 @@ export default function ExpenseForm({
     }
   };
 
+  const compressImage = (imgFile: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(imgFile);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > MAX_WIDTH) {
+            height = Math.round((height * MAX_WIDTH) / width);
+            width = MAX_WIDTH;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(event.target?.result as string);
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          resolve(dataUrl);
+        };
+        img.onerror = () => {
+          resolve(event.target?.result as string);
+        };
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
+
   // Upload file logic
   const handleFileUpload = async (file: File) => {
-    if (!googleAccessToken) {
-      setUploadError('กรุณาลงชื่อเข้าใช้ใหม่อีกครั้งเพื่ออัปโหลดไฟล์หลักฐาน');
-      return;
-    }
-
     if (!file.type.startsWith('image/')) {
       setUploadError('โปรดเลือกเฉพาะรูปภาพหลักฐานการชำระเงิน (Slip)');
       return;
@@ -93,16 +127,26 @@ export default function ExpenseForm({
     setUploadError('');
 
     try {
-      const fileUrl = await uploadReceiptFile(file, googleAccessToken);
-      setReceiptUrl(fileUrl);
-      // Auto-set status to paid since receipt was attached!
-      setStatus('ชำระแล้ว');
-      if (!payDate) {
-        setPayDate(new Date().toISOString().split('T')[0]);
+      if (!googleAccessToken) {
+        // LOCAL MODE: Convert, compress, and store as Data URL locally
+        const compressedBase64 = await compressImage(file);
+        setReceiptUrl(compressedBase64);
+        setStatus('ชำระแล้ว');
+        if (!payDate) {
+          setPayDate(new Date().toISOString().split('T')[0]);
+        }
+      } else {
+        // CLOUD MODE: Upload to Google Drive
+        const fileUrl = await uploadReceiptFile(file, googleAccessToken);
+        setReceiptUrl(fileUrl);
+        setStatus('ชำระแล้ว');
+        if (!payDate) {
+          setPayDate(new Date().toISOString().split('T')[0]);
+        }
       }
     } catch (err: any) {
       console.error('File upload error:', err);
-      setUploadError('อัปโหลดไฟล์ไปยัง Google Drive ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+      setUploadError('อัปโหลดไฟล์หลักฐานไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
     } finally {
       setIsUploading(false);
     }
@@ -167,7 +211,7 @@ export default function ExpenseForm({
       onClose();
     } catch (err: any) {
       console.error('Save error:', err);
-      setErrorMsg('เกิดข้อผิดพลาดในการบันทึกข้อมูลลง Google Sheets: ' + (err.message || ''));
+      setErrorMsg('เกิดข้อผิดพลาดในการบันทึกข้อมูล: ' + (err.message || ''));
     } finally {
       setIsSubmitting(false);
     }
@@ -184,7 +228,7 @@ export default function ExpenseForm({
               {expense ? 'แก้ไขข้อมูลค่าใช้จ่าย' : 'เพิ่มรายการค่าใช้จ่ายใหม่'}
             </h3>
             <p className="text-xs text-zinc-400 mt-0.5">
-              {expense ? 'ปรับปรุงรายละเอียดหรือบันทึกข้อมูลการชำระเงิน' : 'กรอกรายละเอียดเพื่อบันทึกลง Google Sheets'}
+              {expense ? 'ปรับปรุงรายละเอียดหรือบันทึกข้อมูลการชำระเงิน' : 'กรอกรายละเอียดเพื่อบันทึกข้อมูลลงระบบ'}
             </p>
           </div>
           <button
