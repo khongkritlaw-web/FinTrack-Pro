@@ -1,0 +1,6 @@
+{
+  "name": "Monthly Expense Tracker",
+  "description": "A monthly expense tracker and verifier that connects to Google Sheets, featuring summaries, search, filtering, and Google Drive receipt upload.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
