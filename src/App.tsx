@@ -29,8 +29,9 @@ import {
   Sparkles,
   Info
 } from 'lucide-react';
+import seedExpenses from './data/seedExpenses.json';
 
-const SEED_EXPENSES: Expense[] = [];
+const SEED_EXPENSES: Expense[] = seedExpenses as Expense[];
 
 export default function App() {
   // Auth state
@@ -102,153 +103,62 @@ export default function App() {
     }
   }, []);
 
-  const loadPublicData = useCallback(async () => {
-    setIsSyncing(true);
-    try {
-      const records = await fetchPublicExpenses();
-      setExpenses(records);
-      localStorage.setItem('fintrack_expenses', JSON.stringify(records));
-    } catch (err) {
-      console.error('Failed to load public sheet data:', err);
-      setExpenses([]);
-    } finally {
-      setIsSyncing(false);
-    }
+  const loadDefaultSeedData = useCallback(() => {
+    setExpenses(SEED_EXPENSES);
+    localStorage.setItem('fintrack_expenses', JSON.stringify(SEED_EXPENSES));
   }, []);
 
-  // Load from LocalStorage if in guest mode, otherwise sync with Google Sheet
+  // Load from LocalStorage
   useEffect(() => {
-    if (!token) {
-      // Local Mode
-      const stored = localStorage.getItem('fintrack_expenses');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (parsed && parsed.length > 0) {
-            setExpenses(parsed);
-          } else {
-            loadPublicData();
-          }
-        } catch (e) {
-          loadPublicData();
+    const stored = localStorage.getItem('fintrack_expenses');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        // If they have old cached data with fewer than 100 installments, upgrade them to the new 132-installment dataset automatically.
+        if (parsed && parsed.length >= 100) {
+          setExpenses(parsed);
+        } else {
+          loadDefaultSeedData();
         }
-      } else {
-        loadPublicData();
+      } catch (e) {
+        loadDefaultSeedData();
       }
-    } else if (spreadsheetId) {
-      // Cloud Google Sheets Mode
-      syncWithGoogleSheet(token, spreadsheetId);
+    } else {
+      loadDefaultSeedData();
     }
-  }, [token, spreadsheetId, syncWithGoogleSheet, loadPublicData]);
+  }, [loadDefaultSeedData]);
 
-  const handleLogin = async () => {
-    setIsLoggingIn(true);
-    setAppError('');
-    try {
-      const result = await googleSignIn();
-      if (result) {
-        setUser(result.user);
-        setToken(result.accessToken);
-        setNeedsAuth(false);
-        setSuccessToast('เข้าสู่ระบบสำเร็จ ยินดีต้อนรับ!');
-      }
-    } catch (err: any) {
-      console.error('Login failed:', err);
-      setAppError('เข้าสู่ระบบไม่สำเร็จ: ' + (err.message || ''));
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
 
-  const handleLogout = async () => {
-    if (window.confirm('คุณต้องการออกจากระบบใช่หรือไม่?')) {
-      await googleSignOut();
-      setUser(null);
-      setToken(null);
-      setNeedsAuth(false); // Return to local mode instead of blocking
-      setSheetMetadata(null);
-      // Reload local storage data
-      const stored = localStorage.getItem('fintrack_expenses');
-      if (stored) {
-        try {
-          setExpenses(JSON.parse(stored));
-        } catch (e) {
-          loadPublicData();
-        }
-      } else {
-        loadPublicData();
-      }
-    }
-  };
 
   // Create or Update Expense Row
   const handleSaveExpense = async (expenseData: Omit<Expense, 'id' | 'rowNumber'> & { id?: string; rowNumber?: number }) => {
     setIsLoading(true);
     try {
-      if (!token) {
-        // LOCAL GUEST MODE
-        let updatedExpenses: Expense[] = [];
-        if (expenseData.id) {
-          // Update
-          updatedExpenses = expenses.map(exp => 
-            exp.id === expenseData.id 
-              ? { ...exp, ...expenseData } as Expense
-              : exp
-          );
-          setSuccessToast('อัปเดตข้อมูลค่าใช้จ่ายเรียบร้อยแล้ว!');
-        } else {
-          // Add new
-          const newExpense: Expense = {
-            id: 'local-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
-            date: expenseData.date,
-            title: expenseData.title,
-            category: expenseData.category,
-            amount: expenseData.amount,
-            status: expenseData.status,
-            payDate: expenseData.payDate,
-            receiptUrl: expenseData.receiptUrl,
-            notes: expenseData.notes,
-            rowNumber: expenses.length + 2 // mock row number for safety
-          };
-          updatedExpenses = [newExpense, ...expenses];
-          setSuccessToast('เพิ่มรายการค่าใช้จ่ายใหม่เรียบร้อยแล้ว!');
-        }
-        setExpenses(updatedExpenses);
-        localStorage.setItem('fintrack_expenses', JSON.stringify(updatedExpenses));
+      // ALWAYS LOCAL MODE
+      let updatedExpenses: Expense[] = [];
+      if (expenseData.id) {
+        // Update
+        updatedExpenses = expenses.map(exp => 
+          exp.id === expenseData.id 
+            ? { ...exp, ...expenseData } as Expense
+            : exp
+        );
+        setSuccessToast('อัปเดตข้อมูลเรียบร้อยแล้ว!');
       } else {
-        // GOOGLE SHEET CLOUD MODE
-        if (!sheetMetadata) {
-          throw new Error('ไม่พบข้อมูลโครงสร้าง Sheet ปลายทาง');
-        }
-        if (expenseData.id && expenseData.rowNumber) {
-          // Update operation
-          const updatedExpense: Expense = {
-            id: expenseData.id,
-            rowNumber: expenseData.rowNumber,
-            date: expenseData.date,
-            title: expenseData.title,
-            category: expenseData.category,
-            amount: expenseData.amount,
-            status: expenseData.status,
-            payDate: expenseData.payDate,
-            receiptUrl: expenseData.receiptUrl,
-            notes: expenseData.notes
-          };
-
-          await updateExpenseRow(spreadsheetId, sheetMetadata.title, updatedExpense, token);
-          setSuccessToast('อัปเดตข้อมูลค่าใช้จ่ายเรียบร้อยแล้ว!');
-        } else {
-          // Add new operation
-          await addExpenseRow(spreadsheetId, sheetMetadata.title, expenseData, token);
-          setSuccessToast('เพิ่มรายการค่าใช้จ่ายใหม่เรียบร้อยแล้ว!');
-        }
-
-        // Re-fetch data to sync
-        await syncWithGoogleSheet(token, spreadsheetId);
+        // Add new
+        const newExpense: Expense = {
+          id: 'local-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+          ...expenseData,
+          rowNumber: expenses.length + 2
+        } as Expense;
+        updatedExpenses = [newExpense, ...expenses];
+        setSuccessToast('เพิ่มรายการชำระเงินเรียบร้อยแล้ว!');
       }
+      setExpenses(updatedExpenses);
+      localStorage.setItem('fintrack_expenses', JSON.stringify(updatedExpenses));
     } catch (err: any) {
       console.error('Save failed:', err);
-      throw err; // Form component will handle error message display
+      throw err;
     } finally {
       setIsLoading(false);
     }
@@ -264,21 +174,11 @@ export default function App() {
 
     setIsLoading(true);
     try {
-      if (!token) {
-        // LOCAL GUEST MODE
-        const updatedExpenses = expenses.filter(exp => exp.id !== expense.id);
-        setExpenses(updatedExpenses);
-        localStorage.setItem('fintrack_expenses', JSON.stringify(updatedExpenses));
-        setSuccessToast('ลบรายการค่าใช้จ่ายสำเร็จ!');
-      } else {
-        // GOOGLE SHEET CLOUD MODE
-        if (!sheetMetadata) return;
-        if (expense.rowNumber) {
-          await deleteExpenseRow(spreadsheetId, sheetMetadata.sheetId, expense.rowNumber, token);
-          setSuccessToast('ลบรายการค่าใช้จ่ายสำเร็จ!');
-          await syncWithGoogleSheet(token, spreadsheetId);
-        }
-      }
+      // ALWAYS LOCAL MODE
+      const updatedExpenses = expenses.filter(exp => exp.id !== expense.id);
+      setExpenses(updatedExpenses);
+      localStorage.setItem('fintrack_expenses', JSON.stringify(updatedExpenses));
+      setSuccessToast('ลบรายการสำเร็จ!');
     } catch (err: any) {
       console.error('Delete failed:', err);
       setAppError('ไม่สามารถลบรายการได้: ' + (err.message || ''));
@@ -297,93 +197,7 @@ export default function App() {
     setShowForm(true);
   };
 
-  // Welcome / Login Screen
-  if (needsAuth) {
-    return (
-      <div className="min-h-screen bg-[#0d0d0f] text-[#e4e4e7] flex flex-col justify-between p-6 md:p-12 relative overflow-hidden font-sans">
-        {/* Abstract blur background glow */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none"></div>
-        <div className="absolute bottom-10 right-10 w-96 h-96 bg-emerald-500/5 rounded-full blur-[100px] pointer-events-none"></div>
 
-        {/* Top Navbar */}
-        <div className="max-w-7xl w-full mx-auto flex items-center justify-between z-10">
-          <div className="flex items-center gap-2.5">
-            <div className="bg-emerald-500/20 p-2.5 rounded-2xl border border-emerald-500/20 shadow-lg shadow-emerald-500/5">
-              <Wallet className="text-emerald-400" size={24} />
-            </div>
-            <span className="font-bold text-xl tracking-tight bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent uppercase">
-              FinTrack Pro
-            </span>
-          </div>
-          <div className="text-xs text-zinc-500 font-medium font-mono">v1.1.0</div>
-        </div>
-
-        {/* Main Content Card */}
-        <div className="max-w-md w-full mx-auto my-auto z-10 bg-[#121214] border border-[#27272a] p-8 rounded-3xl shadow-2xl text-center space-y-8">
-          <div className="space-y-3">
-            <div className="inline-flex items-center gap-1.5 bg-emerald-500/10 text-emerald-400 text-xs px-3.5 py-1.5 rounded-full font-bold">
-              <Sparkles size={12} />
-              ระบบบันทึกรายรับ-รายจ่ายเชื่อมกับ Google Sheets
-            </div>
-            <h1 className="text-3xl font-bold text-white tracking-tight leading-tight">
-              จัดการค่าใช้จ่ายของคุณ <br />
-              <span className="text-emerald-400">ให้เป็นระเบียบและโปร่งใส</span>
-            </h1>
-            <p className="text-sm text-zinc-400 leading-relaxed max-w-sm mx-auto">
-              บันทึกค่าใช้จ่ายรายเดือนพร้อมสลิปหลักฐาน จัดเก็บเข้าสู่ Google Sheet ของคุณโดยตรง ปลอดภัย และตรวจสอบย้อนหลังได้ทุกเมื่อ
-            </p>
-          </div>
-
-          {/* Core Feature List badges */}
-          <div className="grid grid-cols-2 gap-3 text-left">
-            <div className="bg-[#18181b] border border-[#27272a]/50 p-3.5 rounded-2xl flex items-center gap-2.5">
-              <FileSpreadsheet className="text-emerald-400 shrink-0" size={16} />
-              <div className="text-xs">
-                <p className="font-bold text-zinc-200">Google Sheet</p>
-                <p className="text-zinc-500">ซิงค์บันทึกโดยตรง</p>
-              </div>
-            </div>
-            <div className="bg-[#18181b] border border-[#27272a]/50 p-3.5 rounded-2xl flex items-center gap-2.5">
-              <Database className="text-emerald-400 shrink-0" size={16} />
-              <div className="text-xs">
-                <p className="font-bold text-zinc-200">Google Drive</p>
-                <p className="text-zinc-500">เก็บสลิปหลักฐาน</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Standard Sign In with Google Button */}
-          <div className="space-y-4">
-            <button
-              onClick={handleLogin}
-              disabled={isLoggingIn}
-              className="w-full flex items-center justify-center gap-3 bg-emerald-500 hover:bg-emerald-400 text-[#0d0d0f] font-bold py-3.5 px-6 rounded-2xl shadow-xl hover:shadow-emerald-500/10 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer disabled:opacity-50"
-            >
-              {isLoggingIn ? (
-                <RefreshCw className="animate-spin text-[#0d0d0f]" size={18} />
-              ) : (
-                <svg className="w-5 h-5" viewBox="0 0 48 48">
-                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
-                </svg>
-              )}
-              <span>เข้าใช้งานด้วยบัญชี Google</span>
-            </button>
-            <p className="text-[10px] text-zinc-500 text-center">
-              แอปพลิเคชันจะเชื่อมต่อกับ Google Sheet และ Google Drive ของคุณอย่างปลอดภัยเพื่อบันทึกข้อมูล
-            </p>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="max-w-7xl w-full mx-auto text-center text-xs text-zinc-600 z-10 pt-4">
-          © 2026 FinTrack Pro. พัฒนาขึ้นโดยเคารพสิทธิ์ความเป็นส่วนตัวสูงสุด
-        </div>
-      </div>
-    );
-  }
 
   // Logged-in application dashboard
   return (
@@ -402,98 +216,26 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           
           <div className="flex items-center gap-3">
-            <div className="bg-emerald-500/20 p-2 rounded-xl border border-emerald-500/20 shadow-lg shadow-emerald-500/5">
-              <Wallet className="text-emerald-400" size={20} />
+            <div className="bg-emerald-500/20 p-2.5 rounded-xl border border-emerald-500/20 shadow-lg shadow-emerald-500/5">
+              <Wallet className="text-emerald-400" size={22} />
             </div>
             <div>
-              <h1 className="font-bold text-lg text-white leading-tight uppercase tracking-tight">FinTrack Pro</h1>
-              <p className="text-xs text-zinc-400">ระบบบันทึกค่าใช้จ่ายรายเดือน</p>
+              <h1 className="font-bold text-lg text-white leading-tight uppercase tracking-tight">FinTrack Umar+</h1>
+              <p className="text-xs text-zinc-400">ระบบติดตามและตรวจสอบค่างวดรายเดือน</p>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
-            
-            {/* Quick sync display */}
-            <button
-              onClick={() => token && syncWithGoogleSheet(token, spreadsheetId)}
-              disabled={isSyncing}
-              className={`p-2 rounded-xl bg-[#18181b] border border-[#27272a] text-zinc-300 transition-all hover:bg-[#27272a] ${
-                isSyncing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-              }`}
-              title="ซิงค์ข้อมูลใหม่"
-            >
-              <RefreshCw size={16} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
-            </button>
-
-            {/* Config panel toggle */}
-            <button
-              onClick={() => setShowConfig(!showConfig)}
-              className={`p-2 rounded-xl border transition-all ${
-                showConfig 
-                  ? 'bg-emerald-500 border-emerald-500 text-emerald-950 font-bold' 
-                  : 'bg-[#18181b] border-[#27272a] text-zinc-300 hover:bg-[#27272a]'
-              }`}
-              title="ตั้งค่า Google Sheet"
-            >
-              <Settings size={16} />
-            </button>
-
-            {/* User Profile */}
-            <div className="flex items-center gap-3 pl-3 border-l border-[#27272a]">
-              {!token ? (
-                <>
-                  <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                    <Database size={16} />
-                  </div>
-                  <div className="hidden sm:block text-left">
-                    <p className="text-xs font-bold text-emerald-400 max-w-[120px] truncate flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      โหมดในเครื่อง
-                    </p>
-                    <p className="text-[10px] text-zinc-500 truncate max-w-[120px]">
-                      ข้อมูลเซฟในบราวเซอร์
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleLogin}
-                    disabled={isLoggingIn}
-                    className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#0d0d0f] text-[11px] font-bold transition-all cursor-pointer disabled:opacity-50"
-                  >
-                    {isLoggingIn ? 'กำลังเชื่อมต่อ...' : 'เชื่อมต่อ Sheets'}
-                  </button>
-                </>
-              ) : (
-                <>
-                  {user?.photoURL ? (
-                    <img
-                      src={user.photoURL}
-                      alt={user.displayName || 'User'}
-                      className="w-9 h-9 rounded-full border border-[#27272a] referrerPolicy=no-referrer"
-                    />
-                  ) : (
-                    <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 font-bold text-xs">
-                      {user?.displayName?.substring(0, 1) || 'U'}
-                    </div>
-                  )}
-                  <div className="hidden sm:block text-left">
-                    <p className="text-xs font-bold text-white max-w-[120px] truncate">
-                      {user?.displayName || 'ผู้ใช้งาน'}
-                    </p>
-                    <p className="text-[10px] text-zinc-500 truncate max-w-[120px]">
-                      {user?.email}
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleLogout}
-                    className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all cursor-pointer"
-                    title="ออกจากระบบ"
-                  >
-                    <LogOut size={16} />
-                  </button>
-                </>
-              )}
+            {/* Account Details */}
+            <div className="flex items-center gap-3 pl-3 border-[#27272a]">
+              <div className="bg-emerald-500/10 border border-emerald-500/20 p-2 rounded-xl text-xs text-emerald-400 font-bold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                ผู้รับผิดชอบ: พ่อ & ต้อ
+              </div>
+              <div className="bg-zinc-800 border border-zinc-700 p-2 rounded-xl text-xs text-zinc-300 font-semibold">
+                บัญชี: บัตรเครดิต
+              </div>
             </div>
-
           </div>
 
         </div>
@@ -513,86 +255,37 @@ export default function App() {
           </div>
         )}
 
-        {/* Configuration settings panel */}
-        {showConfig && (
-          <div className="bg-[#121214] border border-[#27272a] p-6 rounded-3xl space-y-4 shadow-xl animate-fade-in">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                <Settings size={16} className="text-emerald-400" />
-                กำหนดค่า Google Spreadsheet ปลายทาง
-              </h3>
-              <span className="text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold px-2 py-0.5 rounded">
-                เชื่อมต่ออยู่
-              </span>
-            </div>
-            
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              โดยปกติระบบจะอ่าน/เขียนข้อมูลใน Spreadsheet เริ่มต้นที่คุณกำหนดมาในความต้องการ 
-              คุณสามารถแก้ไข Spreadsheet ID เป็นลิงก์ชีทอื่นของคุณได้ทันทีเพื่อสลับฐานข้อมูลบันทึก
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-              <div className="md:col-span-3 space-y-1.5">
-                <label className="text-xs font-bold text-zinc-400">Google Spreadsheet ID หรือ ลิงก์เต็ม</label>
-                <input
-                  type="text"
-                  value={spreadsheetId}
-                  onChange={(e) => setSpreadsheetId(e.target.value)}
-                  placeholder="กรอก ID ของชีท หรือ ลิงก์ URL ของชีท"
-                  className="w-full bg-[#18181b] border border-[#27272a] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 placeholder-zinc-600 font-mono"
-                />
-              </div>
-              <button
-                onClick={() => token && syncWithGoogleSheet(token, spreadsheetId)}
-                disabled={isSyncing}
-                className="bg-emerald-500 hover:bg-emerald-400 text-emerald-950 text-xs font-bold h-[38px] px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-emerald-500/10"
-              >
-                <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
-                ซิงค์ชีทใหม่
-              </button>
-            </div>
-
-            {sheetMetadata && (
-              <div className="bg-[#0d0d0f] p-4 rounded-2xl border border-[#27272a] flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet size={16} className="text-emerald-400" />
-                  <div>
-                    <span className="text-zinc-400">หน้าชีทที่เลือกบันทึกปัจจุบัน: </span>
-                    <strong className="text-white">"{sheetMetadata.title}"</strong>
-                    <span className="text-zinc-500 font-mono"> (GID: {sheetMetadata.sheetId})</span>
-                  </div>
-                </div>
-                <a
-                  href={`https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${sheetMetadata.sheetId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 hover:underline font-bold"
-                >
-                  เปิดชีทตรวจสอบโดยตรง
-                  <ExternalLink size={12} />
-                </a>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Action / Title bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="text-xs text-zinc-500 font-medium font-mono uppercase tracking-wider">ภาพรวมกระดานควบคุม</div>
+            <div className="text-xs text-zinc-500 font-medium font-mono uppercase tracking-wider">ภาพรวมระบบค่างวด</div>
             <h2 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2 mt-0.5">
-              แดชบอร์ดค่าใช้จ่ายประจำเดือน
-              {isSyncing && <RefreshCw size={16} className="animate-spin text-emerald-500" />}
+              แดชบอร์ดติดตามค่างวด (ทั้งหมด {expenses.length} งวด)
             </h2>
           </div>
 
-          <button
-            onClick={handleAddNewClick}
-            className="flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-400 hover:shadow-lg hover:shadow-emerald-500/10 text-emerald-950 font-bold px-6 py-3 rounded-2xl text-sm transition-all hover:scale-[1.01] cursor-pointer shadow-lg"
-          >
-            <Plus size={16} />
-            <span>เพิ่มรายการค่าใช้จ่าย</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => {
+                if (window.confirm(`คุณต้องการรีเซ็ตข้อมูลทั้งหมดกลับเป็นค่าเริ่มต้นจาก Google Sheet (${expenses.length} งวด) ใช่หรือไม่?\nข้อมูลที่แก้ไขทั้งหมดบนเว็บจะถูกล้างทิ้ง`)) {
+                  loadDefaultSeedData();
+                  setSuccessToast('รีเซ็ตข้อมูลค่างวดกลับเป็นค่าเริ่มต้นจาก Google Sheet แล้ว!');
+                }
+              }}
+              className="flex items-center justify-center gap-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 font-bold px-4 py-3 rounded-2xl text-sm transition-all cursor-pointer"
+            >
+              <RefreshCw size={14} />
+              <span>รีเซ็ตข้อมูลเริ่มต้น</span>
+            </button>
+
+            <button
+              onClick={handleAddNewClick}
+              className="flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-400 hover:shadow-lg hover:shadow-emerald-500/10 text-emerald-950 font-bold px-5 py-3 rounded-2xl text-sm transition-all hover:scale-[1.01] cursor-pointer shadow-lg"
+            >
+              <Plus size={16} />
+              <span>เพิ่มรายการใหม่</span>
+            </button>
+          </div>
         </div>
 
         {/* Dashboard visuals section */}
@@ -602,17 +295,7 @@ export default function App() {
         <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl flex items-start gap-3 shadow-md shadow-emerald-500/2">
           <Info className="shrink-0 mt-0.5 text-emerald-400" size={18} />
           <div className="text-xs leading-relaxed text-zinc-300">
-            {!token ? (
-              <>
-                <strong>คำแนะนำ:</strong> ขณะนี้คุณกำลังใช้ <strong className="text-emerald-400">"โหมดบันทึกข้อมูลในเครื่อง"</strong> ข้อมูลค่าใช้จ่ายและรูปภาพสลิปทั้งหมดจะถูกบันทึกและประมวลผลภายในเว็บบราวเซอร์ของคุณโดยอัตโนมัติอย่างปลอดภัย (ไม่ต้องผูกกับ Google Sheet) คุณสามารถคลิกปุ่ม <strong>"เชื่อมต่อ Sheets"</strong> ด้านบนเพื่อเชื่อมโยงและซิงค์ข้อมูลกับ Google Sheet และ Google Drive ของคุณได้ตลอดเวลา!
-              </>
-            ) : (
-              <>
-                <strong>คำแนะนำ:</strong> ขณะนี้เชื่อมต่อสำเร็จแล้ว! รายการค่าใช้จ่ายทั้งหมดจะจัดเก็บในแถวของชีท 
-                <strong className="text-emerald-400"> "{sheetMetadata?.title || 'Expense_Sheet'}" </strong> 
-                โดยอัตโนมัติ สลิปหลักฐานจะถูกเก็บลงในโฟลเดอร์ <strong>"Expense_Receipts"</strong> บน Google Drive ของคุณ และสร้างลิงก์สำหรับตรวจสอบเพื่อให้แชร์ได้ง่ายขึ้น
-              </>
-            )}
+            <strong>คำแนะนำในการใช้งาน:</strong> ระบบบันทึกข้อมูลและประมวลผลบนบราวเซอร์ในเครื่องของคุณโดยตรง (ไม่ต้องเชื่อมต่อ Google Sheets ใดๆ) คุณสามารถบันทึกสลิปหลักฐาน, อัปเดตสถานะการชำระเงิน, แก้ไขหมายเหตุ, หรือลบแถวแต่ละรายการได้อย่างอิสระทันที ข้อมูลของคุณจะปลอดภัยในพื้นที่เก็บข้อมูลเครื่องนี้
           </div>
         </div>
 

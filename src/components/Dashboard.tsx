@@ -41,12 +41,39 @@ const COLORS = [
 ];
 
 export default function Dashboard({ expenses }: DashboardProps) {
-  const [lookbackYear, setLookbackYear] = useState<string>(new Date().getFullYear().toString());
+  const [lookbackYear, setLookbackYear] = useState<string>('2569');
   const [lookbackView, setLookbackView] = useState<'month' | 'day' | 'year'>('month');
 
   // Format currency helpers
   const formatBaht = (value: number) => {
     return new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value);
+  };
+
+  const parseDate = (dateStr: string) => {
+    if (!dateStr) return { day: 1, month: 1, year: 2569 };
+    if (dateStr.includes('/')) {
+      const parts = dateStr.split('/');
+      if (parts.length === 3) {
+        return {
+          day: parseInt(parts[0], 10) || 1,
+          month: parseInt(parts[1], 10) || 1,
+          year: parseInt(parts[2], 10) || 2569
+        };
+      }
+    } else if (dateStr.includes('-')) {
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        const y = parseInt(parts[0], 10) || 2026;
+        const m = parseInt(parts[1], 10) || 1;
+        const d = parseInt(parts[2], 10) || 1;
+        return {
+          day: d,
+          month: m,
+          year: y < 2400 ? y + 543 : y // Normalize Gregorian to BE
+        };
+      }
+    }
+    return { day: 1, month: 1, year: 2569 };
   };
 
   const stats = useMemo(() => {
@@ -91,10 +118,13 @@ export default function Dashboard({ expenses }: DashboardProps) {
     const monthlyValues = Array(12).fill(0);
 
     expenses.forEach((exp) => {
-      if (exp.date && exp.date.startsWith(lookbackYear)) {
-        const monthIndex = parseInt(exp.date.split('-')[1], 10) - 1;
-        if (monthIndex >= 0 && monthIndex < 12) {
-          monthlyValues[monthIndex] += exp.amount;
+      if (exp.date) {
+        const { month, year } = parseDate(exp.date);
+        if (year.toString() === lookbackYear) {
+          const monthIndex = month - 1;
+          if (monthIndex >= 0 && monthIndex < 12) {
+            monthlyValues[monthIndex] += exp.amount;
+          }
         }
       }
     });
@@ -107,13 +137,11 @@ export default function Dashboard({ expenses }: DashboardProps) {
 
   // Daily breakdown for the current month
   const dailyBreakdownData = useMemo(() => {
-    const currentMonthStr = new Date().toISOString().slice(0, 7); // YYYY-MM
     const daysInMonth: Record<string, number> = {};
 
-    // Get last 30 days or days of current month
     expenses.forEach((exp) => {
-      if (exp.date && exp.date.startsWith(currentMonthStr)) {
-        const day = exp.date.split('-')[2];
+      if (exp.date) {
+        const { day } = parseDate(exp.date);
         daysInMonth[day] = (daysInMonth[day] || 0) + exp.amount;
       }
     });
@@ -123,7 +151,7 @@ export default function Dashboard({ expenses }: DashboardProps) {
         name: `วันที่ ${parseInt(day, 10)}`,
         'ยอดจ่าย': value
       }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => parseInt(a.name.replace('วันที่ ', ''), 10) - parseInt(b.name.replace('วันที่ ', ''), 10));
   }, [expenses]);
 
   // Yearly comparison data
@@ -131,10 +159,8 @@ export default function Dashboard({ expenses }: DashboardProps) {
     const yearsMap: Record<string, number> = {};
     expenses.forEach((exp) => {
       if (exp.date) {
-        const yr = exp.date.split('-')[0];
-        if (yr) {
-          yearsMap[yr] = (yearsMap[yr] || 0) + exp.amount;
-        }
+        const { year } = parseDate(exp.date);
+        yearsMap[year] = (yearsMap[year] || 0) + exp.amount;
       }
     });
 
@@ -151,12 +177,12 @@ export default function Dashboard({ expenses }: DashboardProps) {
     const yearsSet = new Set<string>();
     expenses.forEach((exp) => {
       if (exp.date) {
-        const yr = exp.date.split('-')[0];
-        if (yr) yearsSet.add(yr);
+        const { year } = parseDate(exp.date);
+        yearsSet.add(year.toString());
       }
     });
     // Add current year if not present
-    yearsSet.add(new Date().getFullYear().toString());
+    yearsSet.add('2569');
     return Array.from(yearsSet).sort((a, b) => b.localeCompare(a));
   }, [expenses]);
 

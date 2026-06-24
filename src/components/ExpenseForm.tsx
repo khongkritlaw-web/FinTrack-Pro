@@ -36,6 +36,7 @@ export default function ExpenseForm({
   const [payDate, setPayDate] = useState('');
   const [receiptUrl, setReceiptUrl] = useState('');
   const [notes, setNotes] = useState('');
+  const [owner, setOwner] = useState<'พ่อ' | 'ต้อ'>('ต้อ');
 
   // UI state
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -57,6 +58,7 @@ export default function ExpenseForm({
       setPayDate(expense.payDate || '');
       setReceiptUrl(expense.receiptUrl || '');
       setNotes(expense.notes || '');
+      setOwner((expense.owner as 'พ่อ' | 'ต้อ') || 'ต้อ');
       setAiSuccessMsg('');
     } else {
       // Clear values for new item
@@ -68,6 +70,7 @@ export default function ExpenseForm({
       setPayDate('');
       setReceiptUrl('');
       setNotes('');
+      setOwner('ต้อ');
       setAiSuccessMsg('');
     }
   }, [expense]);
@@ -259,6 +262,7 @@ export default function ExpenseForm({
         payDate: status === 'ชำระแล้ว' ? payDate || new Date().toISOString().split('T')[0] : '',
         receiptUrl,
         notes: notes.trim(),
+        owner,
         
         // Extracted installment properties
         installmentNo: instNo,
@@ -365,6 +369,35 @@ export default function ExpenseForm({
                   </option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          {/* Owner Selector */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-zinc-400">ผู้รับผิดชอบ</label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setOwner('พ่อ')}
+                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all cursor-pointer ${
+                  owner === 'พ่อ'
+                    ? 'bg-sky-500/10 border-sky-500 text-sky-400'
+                    : 'bg-[#18181b] border-[#27272a] text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                พ่อ
+              </button>
+              <button
+                type="button"
+                onClick={() => setOwner('ต้อ')}
+                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all cursor-pointer ${
+                  owner === 'ต้อ'
+                    ? 'bg-amber-500/10 border-amber-500 text-amber-400'
+                    : 'bg-[#18181b] border-[#27272a] text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                ต้อ
+              </button>
             </div>
           </div>
 

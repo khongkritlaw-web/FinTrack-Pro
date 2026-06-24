@@ -30,10 +30,72 @@ export default function ExpenseList({
   const [selectedCategory, setSelectedCategory] = useState('ทั้งหมด');
   const [selectedStatus, setSelectedStatus] = useState<'ทั้งหมด' | 'ชำระแล้ว' | 'ยังไม่ชำระ'>('ทั้งหมด');
   const [selectedMonth, setSelectedMonth] = useState('ทั้งหมด');
+  const [selectedOwner, setSelectedOwner] = useState<string>('ทั้งหมด');
+
+  // Dynamic unique categories and owners from loaded expenses
+  const dynamicCategories = useMemo(() => {
+    const cats = new Set<string>();
+    expenses.forEach((e) => {
+      if (e.category) cats.add(e.category);
+    });
+    return Array.from(cats).sort();
+  }, [expenses]);
+
+  const dynamicOwners = useMemo(() => {
+    const owners = new Set<string>();
+    expenses.forEach((e) => {
+      if (e.owner) owners.add(e.owner);
+    });
+    return Array.from(owners).sort();
+  }, [expenses]);
 
   // Format currency helpers
   const formatBaht = (value: number) => {
     return new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value);
+  };
+
+  const formatThaiDate = (dateStr: string) => {
+    if (!dateStr) return '-';
+    // If it's in D/M/YYYY (Buddhist Year) format like 1/7/2569
+    if (dateStr.includes('/')) {
+      const parts = dateStr.split('/');
+      if (parts.length === 3) {
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        let year = parseInt(parts[2], 10);
+        
+        const thaiMonthsShort = [
+          'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+          'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+        ];
+        const monthName = thaiMonthsShort[month - 1] || `${month}`;
+        
+        // If year is Gregorian (e.g. 2026), convert to Buddhist Era (2569) for presentation consistency
+        if (year < 2400) {
+          year += 543;
+        }
+        return `${day} ${monthName} ${year}`;
+      }
+    }
+
+    // Fallback to standard parsing
+    try {
+      const d = new Date(dateStr);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+      }
+    } catch (e) {}
+
+    return dateStr;
+  };
+
+  const getOwnerBadgeClass = (ownerName?: string) => {
+    const o = ownerName || 'ทั่วไป';
+    if (o === 'พ่อ') return 'bg-sky-500/10 text-sky-400 border border-sky-500/20';
+    if (o === 'ต้อ') return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+    if (o === 'กมล') return 'bg-purple-500/10 text-purple-400 border border-purple-500/20';
+    if (o.includes('พ่อ') && o.includes('ต้อ')) return 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+    return 'bg-pink-500/10 text-pink-400 border border-pink-500/20';
   };
 
   // Get available months from expenses for filtering
@@ -41,21 +103,37 @@ export default function ExpenseList({
     const monthsSet = new Set<string>();
     expenses.forEach((exp) => {
       if (exp.date) {
-        const monthYear = exp.date.slice(0, 7); // YYYY-MM
-        if (monthYear) monthsSet.add(monthYear);
+        if (exp.date.includes('/')) {
+          const parts = exp.date.split('/');
+          if (parts.length === 3) {
+            // E.g., "1/7/2569" -> Month/Year key "7/2569"
+            monthsSet.add(`${parts[1]}/${parts[2]}`);
+          }
+        } else {
+          const monthYear = exp.date.slice(0, 7); // YYYY-MM
+          if (monthYear) monthsSet.add(monthYear);
+        }
       }
     });
-    return Array.from(monthsSet).sort((a, b) => b.localeCompare(a));
+    return Array.from(monthsSet);
   }, [expenses]);
 
-  // Map YYYY-MM to readable Thai month
+  // Map to readable Thai month
   const formatThaiMonthYear = (val: string) => {
     if (!val || val === 'ทั้งหมด') return 'ทั้งหมด';
-    const [year, month] = val.split('-');
+    
     const monthNames = [
       'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
       'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
     ];
+
+    if (val.includes('/')) {
+      const [month, year] = val.split('/');
+      const mIdx = parseInt(month, 10) - 1;
+      return `${monthNames[mIdx] || month} ${year}`;
+    }
+
+    const [year, month] = val.split('-');
     const thMonth = monthNames[parseInt(month, 10) - 1] || month;
     const thYear = parseInt(year, 10) + 543; // Buddhist Era
     return `${thMonth} ${thYear}`;
@@ -78,17 +156,31 @@ export default function ExpenseList({
       const matchesStatus = selectedStatus === 'ทั้งหมด' || exp.status === selectedStatus;
 
       // 4. Month filter
-      const matchesMonth = selectedMonth === 'ทั้งหมด' || (exp.date && exp.date.startsWith(selectedMonth));
+      let matchesMonth = selectedMonth === 'ทั้งหมด';
+      if (!matchesMonth && exp.date) {
+        if (selectedMonth.includes('/')) {
+          const parts = exp.date.split('/');
+          if (parts.length === 3) {
+            matchesMonth = `${parts[1]}/${parts[2]}` === selectedMonth;
+          }
+        } else {
+          matchesMonth = exp.date.startsWith(selectedMonth);
+        }
+      }
 
-      return matchesSearch && matchesCategory && matchesStatus && matchesMonth;
+      // 5. Owner filter
+      const matchesOwner = selectedOwner === 'ทั้งหมด' || exp.owner === selectedOwner;
+
+      return matchesSearch && matchesCategory && matchesStatus && matchesMonth && matchesOwner;
     });
-  }, [expenses, searchTerm, selectedCategory, selectedStatus, selectedMonth]);
+  }, [expenses, searchTerm, selectedCategory, selectedStatus, selectedMonth, selectedOwner]);
 
   const resetFilters = () => {
     setSearchTerm('');
     setSelectedCategory('ทั้งหมด');
     setSelectedStatus('ทั้งหมด');
     setSelectedMonth('ทั้งหมด');
+    setSelectedOwner('ทั้งหมด');
   };
 
   return (
@@ -118,7 +210,7 @@ export default function ExpenseList({
         </div>
 
         {/* Filter controls */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           
           {/* Month selector */}
           <div className="flex flex-col space-y-1">
@@ -139,16 +231,33 @@ export default function ExpenseList({
 
           {/* Category Selector */}
           <div className="flex flex-col space-y-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-1">หมวดหมู่</label>
+            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-1">บัญชี / บัตร</label>
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
               className="bg-[#18181b] border border-[#27272a] text-white rounded-xl px-3 py-2.5 text-xs font-medium focus:outline-none focus:border-emerald-500 cursor-pointer"
             >
-              <option value="ทั้งหมด">ทั้งหมดทุกหมวดหมู่</option>
-              {CATEGORIES.map((cat) => (
+              <option value="ทั้งหมด">ทั้งหมดทุกบัญชี</option>
+              {dynamicCategories.map((cat) => (
                 <option key={cat} value={cat}>
                   {cat}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Owner selector */}
+          <div className="flex flex-col space-y-1">
+            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-1">ผู้รับผิดชอบ</label>
+            <select
+              value={selectedOwner}
+              onChange={(e) => setSelectedOwner(e.target.value)}
+              className="bg-[#18181b] border border-[#27272a] text-white rounded-xl px-3 py-2.5 text-xs font-medium focus:outline-none focus:border-emerald-500 cursor-pointer"
+            >
+              <option value="ทั้งหมด">ทั้งหมดทุกคน</option>
+              {dynamicOwners.map((ownerName) => (
+                <option key={ownerName} value={ownerName}>
+                  {ownerName}
                 </option>
               ))}
             </select>
@@ -183,7 +292,7 @@ export default function ExpenseList({
       </div>
 
       {/* Filter status summaries */}
-      {(selectedCategory !== 'ทั้งหมด' || selectedStatus !== 'ทั้งหมด' || selectedMonth !== 'ทั้งหมด' || searchTerm) && (
+      {(selectedCategory !== 'ทั้งหมด' || selectedStatus !== 'ทั้งหมด' || selectedMonth !== 'ทั้งหมด' || selectedOwner !== 'ทั้งหมด' || searchTerm) && (
         <div className="flex items-center justify-between bg-[#18181b] border border-[#27272a] px-4 py-2.5 rounded-xl text-xs text-zinc-400">
           <div className="flex items-center gap-1.5">
             <Filter size={14} className="text-emerald-400" />
@@ -216,12 +325,14 @@ export default function ExpenseList({
             <table className="w-full text-left border-collapse text-sm text-zinc-300">
               <thead className="bg-[#0d0d0f]/60 text-zinc-400 text-xs font-semibold uppercase border-b border-[#27272a]">
                 <tr>
-                  <th className="px-5 py-4">วันที่</th>
-                  <th className="px-5 py-4">รายการค่าใช้จ่าย</th>
-                  <th className="px-5 py-4">หมวดหมู่</th>
-                  <th className="px-5 py-4 text-right">จำนวนเงิน</th>
+                  <th className="px-5 py-4 text-center">งวด</th>
+                  <th className="px-5 py-4 text-center">ผู้รับผิดชอบ</th>
+                  <th className="px-5 py-4">เดือน / กำหนดชำระ</th>
+                  <th className="px-5 py-4 text-right">ค่างวด</th>
+                  <th className="px-5 py-4 text-right">ชำระมา</th>
+                  <th className="px-5 py-4 text-right">คงเหลือ</th>
                   <th className="px-5 py-4 text-center">สถานะ</th>
-                  <th className="px-5 py-4">สลิปหลักฐาน</th>
+                  <th className="px-5 py-4 text-center">หลักฐาน</th>
                   <th className="px-5 py-4">หมายเหตุ</th>
                   <th className="px-5 py-4 text-center">จัดการ</th>
                 </tr>
@@ -230,27 +341,36 @@ export default function ExpenseList({
                 {filteredExpenses.map((exp) => (
                   <tr key={exp.id} className="hover:bg-[#18181b]/60 transition-colors">
                     
-                    {/* Date */}
-                    <td className="px-5 py-4 font-mono text-xs whitespace-nowrap">
-                      {exp.date ? new Date(exp.date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }) : '-'}
+                    {/* Installment No */}
+                    <td className="px-5 py-4 font-mono font-bold text-center text-emerald-400">
+                      {exp.installmentNo || '-'}
                     </td>
 
-                    {/* Title */}
-                    <td className="px-5 py-4 font-semibold text-white max-w-[200px] truncate" title={exp.title}>
-                      {exp.title}
-                    </td>
-
-                    {/* Category */}
-                    <td className="px-5 py-4">
-                      <span className="inline-flex items-center gap-1.5 text-xs text-zinc-300">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                        {exp.category}
+                    {/* Owner */}
+                    <td className="px-5 py-4 text-center whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-xl text-xs font-bold ${getOwnerBadgeClass(exp.owner)}`}>
+                        {exp.owner || 'ทั่วไป'}
                       </span>
+                    </td>
+
+                    {/* Due Date */}
+                    <td className="px-5 py-4 font-sans font-medium text-white whitespace-nowrap">
+                      {formatThaiDate(exp.date)}
                     </td>
 
                     {/* Amount */}
                     <td className="px-5 py-4 text-right font-bold text-white font-mono">
                       {formatBaht(exp.amount)}
+                    </td>
+
+                    {/* Amount Paid */}
+                    <td className="px-5 py-4 text-right font-bold text-emerald-400 font-mono">
+                      {formatBaht(exp.amountPaid !== undefined ? exp.amountPaid : (exp.status === 'ชำระแล้ว' ? exp.amount : 0))}
+                    </td>
+
+                    {/* Amount Remaining */}
+                    <td className="px-5 py-4 text-right font-bold text-rose-400 font-mono">
+                      {formatBaht(exp.amountRemaining !== undefined ? exp.amountRemaining : (exp.status === 'ยังไม่ชำระ' ? exp.amount : 0))}
                     </td>
 
                     {/* Status badge */}
@@ -269,7 +389,7 @@ export default function ExpenseList({
                     </td>
 
                     {/* Receipt link */}
-                    <td className="px-5 py-4">
+                    <td className="px-5 py-4 text-center">
                       {exp.receiptUrl ? (
                         <a
                           href={exp.receiptUrl}
@@ -325,14 +445,14 @@ export default function ExpenseList({
               >
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
-                    <span className="text-[10px] text-zinc-500 font-bold uppercase">{exp.category}</span>
-                    <h5 className="font-bold text-white text-base leading-tight">{exp.title}</h5>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-emerald-400 font-bold uppercase">งวดที่ {exp.installmentNo || '-'}</span>
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${getOwnerBadgeClass(exp.owner)}`}>
+                        {exp.owner || 'ทั่วไป'}
+                      </span>
+                    </div>
+                    <h5 className="font-bold text-white text-base leading-tight">กำหนดชำระ: {formatThaiDate(exp.date)}</h5>
                   </div>
-                  <span className="font-bold text-white text-lg font-mono">{formatBaht(exp.amount)}</span>
-                </div>
-
-                <div className="flex items-center justify-between text-xs text-zinc-400 pt-1 border-t border-[#27272a]/60">
-                  <span className="font-mono">{exp.date ? new Date(exp.date).toLocaleDateString('th-TH') : '-'}</span>
                   
                   {exp.status === 'ชำระแล้ว' ? (
                     <span className="inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-400 text-[10px] px-2 py-0.5 rounded-full font-bold border border-emerald-500/20">
@@ -343,6 +463,25 @@ export default function ExpenseList({
                       ยังไม่ชำระ
                     </span>
                   )}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 bg-[#0d0d0f]/55 p-3 rounded-xl border border-[#27272a]/40">
+                  <div className="text-center">
+                    <p className="text-[9px] font-semibold text-zinc-500">ค่างวด</p>
+                    <p className="text-xs font-bold text-white mt-0.5 font-mono">{formatBaht(exp.amount)}</p>
+                  </div>
+                  <div className="text-center border-x border-[#27272a]/60">
+                    <p className="text-[9px] font-semibold text-zinc-500">ชำระมา</p>
+                    <p className="text-xs font-bold text-emerald-400 mt-0.5 font-mono">
+                      {formatBaht(exp.amountPaid !== undefined ? exp.amountPaid : (exp.status === 'ชำระแล้ว' ? exp.amount : 0))}
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-[9px] font-semibold text-zinc-500">คงเหลือ</p>
+                    <p className="text-xs font-bold text-rose-400 mt-0.5 font-mono">
+                      {formatBaht(exp.amountRemaining !== undefined ? exp.amountRemaining : (exp.status === 'ยังไม่ชำระ' ? exp.amount : 0))}
+                    </p>
+                  </div>
                 </div>
 
                 {exp.notes && (

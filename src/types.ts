@@ -14,9 +14,11 @@ export interface Expense {
   installmentNo?: string;   // "งวด"
   amountPaid?: number;       // "ชำระมา"
   amountRemaining?: number;  // "คงเหลือ"
+  owner?: string;            // ผู้รับผิดชอบ (e.g. 'พ่อ', 'ต้อ')
 }
 
 export const CATEGORIES = [
+  'บัตรเครดิต',
   'ค่าที่พัก / ค่าบ้าน',
   'ค่าน้ำ / ค่าไฟ',
   'ค่าอาหาร / เครื่องดื่ม',
