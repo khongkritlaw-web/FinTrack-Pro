@@ -50,33 +50,23 @@ export default function Dashboard({ expenses }: DashboardProps) {
   };
 
   const stats = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const currentMonthStr = new Date().toISOString().slice(0, 7); // YYYY-MM
-
     let total = 0;
     let paid = 0;
     let unpaid = 0;
-    let today = 0;
-    let currentMonth = 0;
+    const totalInstallments = expenses.length;
+    let paidInstallments = 0;
 
     expenses.forEach((exp) => {
       total += exp.amount;
       if (exp.status === 'ชำระแล้ว') {
-        paid += exp.amount;
+        paid += exp.amountPaid !== undefined ? exp.amountPaid : exp.amount;
+        paidInstallments++;
       } else {
-        unpaid += exp.amount;
-      }
-
-      if (exp.date === todayStr) {
-        today += exp.amount;
-      }
-
-      if (exp.date && exp.date.startsWith(currentMonthStr)) {
-        currentMonth += exp.amount;
+        unpaid += exp.amountRemaining !== undefined ? exp.amountRemaining : exp.amount;
       }
     });
 
-    return { total, paid, unpaid, today, currentMonth };
+    return { total, paid, unpaid, totalInstallments, paidInstallments };
   }, [expenses]);
 
   // Chart 1: Expenses by Category
@@ -174,11 +164,11 @@ export default function Dashboard({ expenses }: DashboardProps) {
     <div id="dashboard-section" className="space-y-8">
       {/* Metric Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        {/* Card 1: Total */}
+        {/* Card 1: Total Contract */}
         <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-5 shadow-lg relative overflow-hidden transition-all hover:scale-[1.02] hover:border-zinc-700/50">
           <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl"></div>
           <div className="flex items-center justify-between mb-3">
-            <span className="text-zinc-400 text-sm font-medium">ค่าใช้จ่ายทั้งหมด</span>
+            <span className="text-zinc-400 text-sm font-medium">ยอดค่างวดทั้งหมด</span>
             <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-2 rounded-xl shadow-inner">
               <TrendingUp size={18} />
             </div>
@@ -186,22 +176,22 @@ export default function Dashboard({ expenses }: DashboardProps) {
           <h3 className="text-2xl font-bold text-white tracking-tight">
             {formatBaht(stats.total)}
           </h3>
-          <p className="text-xs text-zinc-500 mt-2">ยอดสะสมรวมในระบบ</p>
+          <p className="text-xs text-zinc-500 mt-2">ยอดสัญญาทั้งหมดในระบบ</p>
         </div>
 
-        {/* Card 2: This Month */}
+        {/* Card 2: Total Installments */}
         <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-5 shadow-lg relative overflow-hidden transition-all hover:scale-[1.02] hover:border-zinc-700/50">
           <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl"></div>
           <div className="flex items-center justify-between mb-3">
-            <span className="text-zinc-400 text-sm font-medium">ค่าใช้จ่ายประจำเดือน</span>
+            <span className="text-zinc-400 text-sm font-medium">จำนวนงวดทั้งหมด</span>
             <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-2 rounded-xl">
               <Calendar size={18} />
             </div>
           </div>
           <h3 className="text-2xl font-bold text-emerald-400 tracking-tight">
-            {formatBaht(stats.currentMonth)}
+            {stats.totalInstallments} งวด
           </h3>
-          <p className="text-xs text-zinc-500 mt-2">ยอดค่าใช้จ่ายเดือนนี้</p>
+          <p className="text-xs text-zinc-500 mt-2">จำนวนงวดชำระสะสม</p>
         </div>
 
         {/* Card 3: Paid */}
@@ -217,15 +207,15 @@ export default function Dashboard({ expenses }: DashboardProps) {
             {formatBaht(stats.paid)}
           </h3>
           <p className="text-xs text-zinc-500 mt-2">
-            คิดเป็น {stats.total > 0 ? ((stats.paid / stats.total) * 100).toFixed(0) : 0}% ของยอดรวม
+            คิดเป็น {stats.total > 0 ? ((stats.paid / stats.total) * 100).toFixed(0) : 0}% ของทั้งหมด
           </p>
         </div>
 
-        {/* Card 4: Unpaid */}
+        {/* Card 4: Unpaid / Outstanding */}
         <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-5 shadow-lg relative overflow-hidden transition-all hover:scale-[1.02] hover:border-zinc-700/50">
           <div className="absolute top-0 right-0 w-24 h-24 bg-rose-500/10 rounded-full blur-2xl"></div>
           <div className="flex items-center justify-between mb-3">
-            <span className="text-zinc-400 text-sm font-medium">ยังไม่ชำระ</span>
+            <span className="text-zinc-400 text-sm font-medium">ยอดคงเหลือค้างชำระ</span>
             <div className="bg-rose-500/20 text-rose-400 p-2 rounded-xl">
               <AlertCircle size={18} />
             </div>
@@ -233,22 +223,22 @@ export default function Dashboard({ expenses }: DashboardProps) {
           <h3 className="text-2xl font-bold text-rose-400 tracking-tight">
             {formatBaht(stats.unpaid)}
           </h3>
-          <p className="text-xs text-zinc-500 mt-2">ยอดค้างจ่ายที่ต้องจัดการ</p>
+          <p className="text-xs text-zinc-500 mt-2">ยอดคงค้างที่ยังไม่ชำระ</p>
         </div>
 
-        {/* Card 5: Today */}
+        {/* Card 5: Completed Ratio */}
         <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-5 shadow-lg relative overflow-hidden transition-all hover:scale-[1.02] hover:border-zinc-700/50">
           <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/10 rounded-full blur-2xl"></div>
           <div className="flex items-center justify-between mb-3">
-            <span className="text-zinc-400 text-sm font-medium">ค่าใช้จ่ายวันนี้</span>
+            <span className="text-zinc-400 text-sm font-medium">งวดที่ชำระแล้ว</span>
             <div className="bg-amber-500/20 text-amber-400 p-2 rounded-xl">
               <Clock size={18} />
             </div>
           </div>
           <h3 className="text-2xl font-bold text-amber-400 tracking-tight">
-            {formatBaht(stats.today)}
+            {stats.paidInstallments} / {stats.totalInstallments}
           </h3>
-          <p className="text-xs text-zinc-500 mt-2">อัปเดตแบบเรียลไทม์วันนี้</p>
+          <p className="text-xs text-zinc-500 mt-2">จำนวนงวดที่เสร็จสิ้นภารกิจ</p>
         </div>
       </div>
 

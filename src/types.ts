@@ -1,14 +1,19 @@
 export interface Expense {
   id: string;
-  date: string;
-  title: string;
+  date: string;       // due date/month
+  title: string;      // "งวดที่ X" or title
   category: string;
-  amount: number;
+  amount: number;     // installment amount (ค่างวด)
   status: 'ชำระแล้ว' | 'ยังไม่ชำระ';
-  payDate: string;
-  receiptUrl: string;
+  payDate: string;    // payment date
+  receiptUrl: string; // receipt image or doc url (หลักฐาน)
   notes: string;
   rowNumber?: number; // 1-based index in Google Sheets
+  
+  // Installment Tracker extensions
+  installmentNo?: string;   // "งวด"
+  amountPaid?: number;       // "ชำระมา"
+  amountRemaining?: number;  // "คงเหลือ"
 }
 
 export const CATEGORIES = [

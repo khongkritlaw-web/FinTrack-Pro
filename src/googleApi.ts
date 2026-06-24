@@ -91,14 +91,86 @@ export const initializeSheetHeaders = async (
 };
 
 /**
- * Fetch all expense rows from Google Sheets
+ * Fetch all installment/expense rows from public CSV (no login required)
+ */
+export const fetchPublicExpenses = async (): Promise<Expense[]> => {
+  const url = `https://docs.google.com/spreadsheets/d/${DEFAULT_SPREADSHEET_ID}/export?format=csv&gid=${DEFAULT_GID}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error('Failed to fetch public spreadsheet');
+  }
+  const csvText = await response.text();
+  const lines = csvText.split('\n');
+  const expenses: Expense[] = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+    
+    // Simple CSV parser that handles quotes
+    const row: string[] = [];
+    let inQuotes = false;
+    let currentCell = '';
+    for (let c = 0; c < line.length; c++) {
+      const char = line[c];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        row.push(currentCell.trim());
+        currentCell = '';
+      } else {
+        currentCell += char;
+      }
+    }
+    row.push(currentCell.trim());
+    
+    if (row.length < 2) continue;
+    
+    const rawNo = (row[1] || '').trim();
+    const installmentNoNum = parseInt(rawNo, 10);
+    
+    if (isNaN(installmentNoNum)) {
+      continue;
+    }
+    
+    const installmentNo = rawNo;
+    const date = row[2] || ''; // e.g. "1/7/2569"
+    const amountDue = parseFloat((row[3] || '0').replace(/,/g, '').replace(/"/g, '')) || 0;
+    const amountPaid = parseFloat((row[4] || '0').replace(/,/g, '').replace(/"/g, '')) || 0;
+    const amountRemaining = parseFloat((row[5] || '0').replace(/,/g, '').replace(/"/g, '')) || 0;
+    const receiptUrl = (row[6] || '').replace(/"/g, '');
+    
+    const status = amountPaid >= amountDue ? 'ชำระแล้ว' : 'ยังไม่ชำระ';
+    
+    expenses.push({
+      id: `inst-${installmentNo}`,
+      installmentNo,
+      date,
+      title: `งวดที่ ${installmentNo}`,
+      category: 'ค่างวด',
+      amount: amountDue,
+      amountPaid,
+      amountRemaining,
+      status,
+      payDate: amountPaid > 0 ? date : '',
+      receiptUrl,
+      notes: amountPaid > 0 ? `ชำระมาแล้ว ${amountPaid.toLocaleString()} บาท` : 'ยังไม่มีการชำระ',
+      rowNumber: i + 1
+    });
+  }
+  
+  return expenses;
+};
+
+/**
+ * Fetch all expense rows from Google Sheets (authenticated)
  */
 export const fetchExpenses = async (
   spreadsheetId: string,
   sheetTitle: string,
   token: string
 ): Promise<Expense[]> => {
-  const range = `${sheetTitle}!A:Z`;
+  const range = `${sheetTitle}!A:G`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`;
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
@@ -112,48 +184,42 @@ export const fetchExpenses = async (
   const data = await response.json();
   const values: string[][] = data.values || [];
 
-  // If entirely empty, initialize with headers and return empty
-  if (values.length === 0) {
-    await initializeSheetHeaders(spreadsheetId, sheetTitle, token);
-    return [];
-  }
-
-  // Check if first row is header, if values is size 1 and has no actual expense rows, return empty
-  if (values.length === 1) {
-    // Row 1 is header
-    return [];
-  }
-
   const expenses: Expense[] = [];
 
-  // Index 0 is Header: ID | วันที่ | รายการ | หมวดหมู่ | จำนวนเงิน | สถานะ | วันที่ชำระ | สลิปหลักฐาน | หมายเหตุ
-  for (let i = 1; i < values.length; i++) {
+  for (let i = 0; i < values.length; i++) {
     const row = values[i];
-    if (!row || row.length === 0) continue;
+    if (!row || row.length < 2) continue;
 
-    // Google Sheets index corresponds to columns
-    const id = row[0] || `EXP-ROW-${i + 1}`;
-    const date = row[1] || '';
-    const title = row[2] || '';
-    const category = row[3] || 'เบ็ดเตล็ด';
-    const amount = parseFloat(row[4] || '0') || 0;
-    const statusVal = row[5] || 'ยังไม่ชำระ';
-    const status: 'ชำระแล้ว' | 'ยังไม่ชำระ' = statusVal === 'ชำระแล้ว' ? 'ชำระแล้ว' : 'ยังไม่ชำระ';
-    const payDate = row[6] || '';
-    const receiptUrl = row[7] || '';
-    const notes = row[8] || '';
+    const rawNo = (row[1] || '').trim();
+    const installmentNoNum = parseInt(rawNo, 10);
+
+    if (isNaN(installmentNoNum)) {
+      continue;
+    }
+
+    const installmentNo = rawNo;
+    const date = row[2] || '';
+    const amountDue = parseFloat((row[3] || '0').replace(/,/g, '')) || 0;
+    const amountPaid = parseFloat((row[4] || '0').replace(/,/g, '')) || 0;
+    const amountRemaining = parseFloat((row[5] || '0').replace(/,/g, '')) || 0;
+    const receiptUrl = row[6] || '';
+
+    const status = amountPaid >= amountDue ? 'ชำระแล้ว' : 'ยังไม่ชำระ';
 
     expenses.push({
-      id,
+      id: `inst-${installmentNo}`,
+      installmentNo,
       date,
-      title,
-      category,
-      amount,
+      title: `งวดที่ ${installmentNo}`,
+      category: 'ค่างวด',
+      amount: amountDue,
+      amountPaid,
+      amountRemaining,
       status,
-      payDate,
+      payDate: amountPaid > 0 ? date : '',
       receiptUrl,
-      notes,
-      rowNumber: i + 1, // Store the 1-based index (header is 1, first data row is 2)
+      notes: amountPaid > 0 ? `ชำระมาแล้ว ${amountPaid.toLocaleString()} บาท` : 'ยังไม่มีการชำระ',
+      rowNumber: i + 1,
     });
   }
 
@@ -169,22 +235,20 @@ export const addExpenseRow = async (
   expense: Omit<Expense, 'id'>,
   token: string
 ): Promise<void> => {
-  const expenseId = `EXP-${Date.now()}`;
+  // Not used in fixed installment sheet, but kept for compatibility
   const values = [
     [
-      expenseId,
+      '',
+      expense.installmentNo || '',
       expense.date,
-      expense.title,
-      expense.category,
       expense.amount.toString(),
-      expense.status,
-      expense.payDate || '',
-      expense.receiptUrl || '',
-      expense.notes || ''
+      expense.amountPaid ? expense.amountPaid.toString() : '',
+      expense.amountRemaining ? expense.amountRemaining.toString() : '',
+      expense.receiptUrl || ''
     ]
   ];
 
-  const range = `${sheetTitle}!A:I`;
+  const range = `${sheetTitle}!A:G`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`;
   const response = await fetch(url, {
     method: 'POST',
@@ -214,21 +278,19 @@ export const updateExpenseRow = async (
     throw new Error('Cannot update expense without sheet row number.');
   }
 
+  // Update starting from Column B (index 1) to Column G (index 6)
   const values = [
     [
-      expense.id,
+      expense.installmentNo || '',
       expense.date,
-      expense.title,
-      expense.category,
       expense.amount.toString(),
-      expense.status,
-      expense.payDate || '',
-      expense.receiptUrl || '',
-      expense.notes || ''
+      expense.amountPaid ? expense.amountPaid.toString() : '',
+      expense.amountRemaining !== undefined ? expense.amountRemaining.toString() : '',
+      expense.receiptUrl || ''
     ]
   ];
 
-  const range = `${sheetTitle}!A${expense.rowNumber}:I${expense.rowNumber}`;
+  const range = `${sheetTitle}!B${expense.rowNumber}:G${expense.rowNumber}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`;
   const response = await fetch(url, {
     method: 'PUT',

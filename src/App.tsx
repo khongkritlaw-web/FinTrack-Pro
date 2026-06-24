@@ -8,6 +8,7 @@ import {
   updateExpenseRow,
   deleteExpenseRow,
   DEFAULT_SPREADSHEET_ID,
+  fetchPublicExpenses,
   SheetMetadata
 } from './googleApi';
 import { Expense } from './types';
@@ -29,74 +30,7 @@ import {
   Info
 } from 'lucide-react';
 
-const SEED_EXPENSES: Expense[] = [
-  {
-    id: "seed-1",
-    date: "2026-06-01",
-    title: "ค่าเช่าคอนโดมิเนียม ประจำเดือนมิถุนายน",
-    category: "ค่าที่พัก / ค่าบ้าน",
-    amount: 12000,
-    status: "ชำระแล้ว",
-    payDate: "2026-06-01",
-    receiptUrl: "",
-    notes: "โอนผ่านแอปธนาคารเรียบร้อย"
-  },
-  {
-    id: "seed-2",
-    date: "2026-06-15",
-    title: "ค่าน้ำ + ค่าไฟ คอนโด",
-    category: "ค่าน้ำ / ค่าไฟ",
-    amount: 3450,
-    status: "ชำระแล้ว",
-    payDate: "2026-06-16",
-    receiptUrl: "",
-    notes: "ค่าไฟเดือนนี้ค่อนข้างสูงเนื่องจากเปิดแอร์บ่อย"
-  },
-  {
-    id: "seed-3",
-    date: "2026-06-20",
-    title: "ซื้อของกินของใช้เข้าบ้าน (Lotus's)",
-    category: "ช้อปปิ้ง / ของใช้",
-    amount: 2150,
-    status: "ชำระแล้ว",
-    payDate: "2026-06-20",
-    receiptUrl: "",
-    notes: "ตุนอาหารแห้งและน้ำดื่มสำหรับครึ่งเดือนหลัง"
-  },
-  {
-    id: "seed-4",
-    date: "2026-06-22",
-    title: "เติมน้ำมันรถยนต์ประจำสัปดาห์",
-    category: "ค่าเดินทาง / น้ำมันรถ",
-    amount: 1200,
-    status: "ชำระแล้ว",
-    payDate: "2026-06-22",
-    receiptUrl: "",
-    notes: "ปั๊ม Shell คาร์บอนต่ำ"
-  },
-  {
-    id: "seed-5",
-    date: "2026-06-23",
-    title: "ค่าแพ็กเกจอินเทอร์เน็ตบ้านและมือถือ AIS",
-    category: "อินเทอร์เน็ต / โทรศัพท์",
-    amount: 899,
-    status: "ยังไม่ชำระ",
-    payDate: "",
-    receiptUrl: "",
-    notes: "กำหนดชำระทุกวันที่ 28 ของเดือน"
-  },
-  {
-    id: "seed-6",
-    date: "2026-06-24",
-    title: "ค่าบริการตรวจสุขภาพประจำปี",
-    category: "สุขภาพ / ยา",
-    amount: 4500,
-    status: "ยังไม่ชำระ",
-    payDate: "",
-    receiptUrl: "",
-    notes: "รอคิวตรวจวันอาทิตย์นี้และชำระที่เคาน์เตอร์โรงพยาบาล"
-  }
-];
+const SEED_EXPENSES: Expense[] = [];
 
 export default function App() {
   // Auth state
@@ -168,6 +102,20 @@ export default function App() {
     }
   }, []);
 
+  const loadPublicData = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      const records = await fetchPublicExpenses();
+      setExpenses(records);
+      localStorage.setItem('fintrack_expenses', JSON.stringify(records));
+    } catch (err) {
+      console.error('Failed to load public sheet data:', err);
+      setExpenses([]);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, []);
+
   // Load from LocalStorage if in guest mode, otherwise sync with Google Sheet
   useEffect(() => {
     if (!token) {
@@ -175,19 +123,23 @@ export default function App() {
       const stored = localStorage.getItem('fintrack_expenses');
       if (stored) {
         try {
-          setExpenses(JSON.parse(stored));
+          const parsed = JSON.parse(stored);
+          if (parsed && parsed.length > 0) {
+            setExpenses(parsed);
+          } else {
+            loadPublicData();
+          }
         } catch (e) {
-          setExpenses(SEED_EXPENSES);
+          loadPublicData();
         }
       } else {
-        setExpenses(SEED_EXPENSES);
-        localStorage.setItem('fintrack_expenses', JSON.stringify(SEED_EXPENSES));
+        loadPublicData();
       }
     } else if (spreadsheetId) {
       // Cloud Google Sheets Mode
       syncWithGoogleSheet(token, spreadsheetId);
     }
-  }, [token, spreadsheetId, syncWithGoogleSheet]);
+  }, [token, spreadsheetId, syncWithGoogleSheet, loadPublicData]);
 
   const handleLogin = async () => {
     setIsLoggingIn(true);
@@ -221,10 +173,10 @@ export default function App() {
         try {
           setExpenses(JSON.parse(stored));
         } catch (e) {
-          setExpenses(SEED_EXPENSES);
+          loadPublicData();
         }
       } else {
-        setExpenses(SEED_EXPENSES);
+        loadPublicData();
       }
     }
   };

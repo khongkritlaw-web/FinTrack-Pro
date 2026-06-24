@@ -11,7 +11,8 @@ import {
   Paperclip,
   CheckCircle,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  Sparkles
 } from 'lucide-react';
 
 interface ExpenseFormProps {
@@ -39,6 +40,8 @@ export default function ExpenseForm({
   // UI state
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isAiParsing, setIsAiParsing] = useState(false);
+  const [aiSuccessMsg, setAiSuccessMsg] = useState('');
   const [uploadError, setUploadError] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -54,16 +57,18 @@ export default function ExpenseForm({
       setPayDate(expense.payDate || '');
       setReceiptUrl(expense.receiptUrl || '');
       setNotes(expense.notes || '');
+      setAiSuccessMsg('');
     } else {
       // Clear values for new item
       setDate(new Date().toISOString().split('T')[0]);
       setTitle('');
-      setCategory(CATEGORIES[2]); // Default to 'ค่าอาหาร / เครื่องดื่ม'
+      setCategory(CATEGORIES[0]); // Default to 'ค่าที่พัก / ค่าบ้าน' (or installment)
       setAmount('');
       setStatus('ยังไม่ชำระ');
       setPayDate('');
       setReceiptUrl('');
       setNotes('');
+      setAiSuccessMsg('');
     }
   }, [expense]);
 
@@ -118,37 +123,81 @@ export default function ExpenseForm({
 
   // Upload file logic
   const handleFileUpload = async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setUploadError('โปรดเลือกเฉพาะรูปภาพหลักฐานการชำระเงิน (Slip)');
+    const isImage = file.type.startsWith('image/');
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isExcel = file.type.includes('spreadsheet') || file.type.includes('excel') || file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls');
+
+    if (!isImage && !isPdf && !isExcel) {
+      setUploadError('โปรดเลือกเฉพาะไฟล์รูปภาพหลักฐาน (Slip), PDF หรือ Excel เท่านั้น');
       return;
     }
 
     setIsUploading(true);
+    setIsAiParsing(true);
     setUploadError('');
+    setAiSuccessMsg('');
 
     try {
-      if (!googleAccessToken) {
-        // LOCAL MODE: Convert, compress, and store as Data URL locally
-        const compressedBase64 = await compressImage(file);
-        setReceiptUrl(compressedBase64);
+      // 1. Send file to backend Express API for Gemini to parse
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const parseRes = await fetch("/api/parse-receipt", {
+        method: "POST",
+        body: formData
+      });
+
+      if (parseRes.ok) {
+        const parsed = await parseRes.json();
+        
+        if (parsed.amount) {
+          setAmount(parsed.amount.toString());
+        }
+        if (parsed.date) {
+          setPayDate(parsed.date);
+        }
+        if (parsed.notes) {
+          setNotes((prev) => prev ? `${prev}\n${parsed.notes}` : parsed.notes);
+        }
+        if (parsed.installmentNo) {
+          setTitle(`งวดที่ ${parsed.installmentNo}`);
+        }
+        
         setStatus('ชำระแล้ว');
-        if (!payDate) {
-          setPayDate(new Date().toISOString().split('T')[0]);
+        
+        let msg = "ระบบสแกนข้อมูลด้วย AI สำเร็จ!";
+        if (parsed.installmentNo) {
+          msg += ` (พบเป็นงวดที่ ${parsed.installmentNo})`;
+        }
+        if (parsed.amount) {
+          msg += ` ยอดเงิน ${parsed.amount.toLocaleString()} บาท`;
+        }
+        setAiSuccessMsg(msg);
+      } else {
+        const errorData = await parseRes.json().catch(() => ({}));
+        console.warn("AI Parsing failed:", errorData.error || "Unknown response");
+      }
+
+      // 2. Handle final file storage URL
+      if (!googleAccessToken) {
+        // LOCAL MODE: Convert and compress if image, otherwise keep mock info
+        if (isImage) {
+          const compressedBase64 = await compressImage(file);
+          setReceiptUrl(compressedBase64);
+        } else {
+          setReceiptUrl(`local-file:${file.name}`);
         }
       } else {
-        // CLOUD MODE: Upload to Google Drive
+        // CLOUD MODE: Upload directly to Google Drive
         const fileUrl = await uploadReceiptFile(file, googleAccessToken);
         setReceiptUrl(fileUrl);
-        setStatus('ชำระแล้ว');
-        if (!payDate) {
-          setPayDate(new Date().toISOString().split('T')[0]);
-        }
       }
     } catch (err: any) {
       console.error('File upload error:', err);
-      setUploadError('อัปโหลดไฟล์หลักฐานไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+      setUploadError('บันทึกข้อมูลหลักฐานสำเร็จ แต่อาจมีข้อผิดพลาดบางอย่างกับระบบ AI');
     } finally {
       setIsUploading(false);
+      setIsAiParsing(false);
     }
   };
 
@@ -166,7 +215,6 @@ export default function ExpenseForm({
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       await handleFileUpload(e.dataTransfer.files[0]);
     }
@@ -183,7 +231,7 @@ export default function ExpenseForm({
     setErrorMsg('');
 
     if (!title.trim()) {
-      setErrorMsg('กรุณากรอกรายการค่าใช้จ่าย');
+      setErrorMsg('กรุณากรอกรายการชำระเงิน / งวดที่');
       return;
     }
 
@@ -196,6 +244,10 @@ export default function ExpenseForm({
     setIsSubmitting(true);
 
     try {
+      // Find the installment number if any
+      const matchedInst = title.match(/งวดที่\s*(\d+)/i) || title.match(/งวด\s*(\d+)/i) || [null, null];
+      const instNo = matchedInst[1] || expense?.installmentNo || '';
+
       await onSave({
         id: expense?.id,
         rowNumber: expense?.rowNumber,
@@ -207,6 +259,11 @@ export default function ExpenseForm({
         payDate: status === 'ชำระแล้ว' ? payDate || new Date().toISOString().split('T')[0] : '',
         receiptUrl,
         notes: notes.trim(),
+        
+        // Extracted installment properties
+        installmentNo: instNo,
+        amountPaid: status === 'ชำระแล้ว' ? parsedAmount : 0,
+        amountRemaining: status === 'ชำระแล้ว' ? 0 : parsedAmount,
       });
       onClose();
     } catch (err: any) {
@@ -355,7 +412,7 @@ export default function ExpenseForm({
 
               {/* Upload Receipt / Slip */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-zinc-400">แนบสลิปหลักฐานการชำระเงิน</label>
+                <label className="text-xs font-semibold text-zinc-400">แนบสลิปหลักฐาน, PDF หรือไฟล์ Excel (AI สแกนอัตโนมัติ)</label>
                 
                 {/* Drag and drop stage */}
                 <div
@@ -374,51 +431,68 @@ export default function ExpenseForm({
                   <input
                     type="file"
                     id="slip-upload-input"
-                    accept="image/*"
+                    accept="image/*,application/pdf,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                     onChange={handleFileInputChange}
                     className="hidden"
-                    disabled={isUploading}
+                    disabled={isUploading || isAiParsing}
                   />
 
-                  {isUploading ? (
+                  {isAiParsing ? (
+                    <div className="flex flex-col items-center py-3 text-center">
+                      <div className="relative mb-2">
+                        <Sparkles size={28} className="text-emerald-400 animate-pulse" />
+                        <Loader2 size={36} className="animate-spin text-emerald-500 absolute -top-1 -left-1" />
+                      </div>
+                      <p className="text-xs font-bold text-emerald-400">AI กำลังวิเคราะห์สแกนเอกสารของคุณอย่างแม่นยำ...</p>
+                      <p className="text-[10px] text-zinc-400 mt-1">กรุณารอสักครู่ ระบบกำลังดึงวันที่ งวดที่ และยอดเงิน</p>
+                    </div>
+                  ) : isUploading ? (
                     <div className="flex flex-col items-center py-2.5">
                       <Loader2 size={24} className="animate-spin text-emerald-500 mb-2" />
-                      <p className="text-xs font-medium text-zinc-300">กำลังอัปโหลดรูปภาพไปยัง Google Drive...</p>
+                      <p className="text-xs font-medium text-zinc-300">กำลังจัดเก็บไฟล์หลักฐานของคุณ...</p>
                     </div>
                   ) : receiptUrl ? (
                     <div className="flex flex-col items-center w-full py-1">
                       <div className="bg-emerald-500/20 text-emerald-400 p-2 rounded-full mb-1">
                         <CheckCircle size={20} />
                       </div>
-                      <p className="text-xs font-bold text-emerald-400">อัปโหลดสลิปสำเร็จ!</p>
+                      <p className="text-xs font-bold text-emerald-400">อัปโหลดสลิปหลักฐานสำเร็จ!</p>
                       <a
-                        href={receiptUrl}
-                        target="_blank"
+                        href={receiptUrl.startsWith('data:') ? '#' : receiptUrl}
+                        target={receiptUrl.startsWith('data:') ? undefined : "_blank"}
                         rel="noreferrer"
                         className="text-[11px] text-emerald-400 underline hover:text-emerald-300 mt-1 truncate max-w-full font-semibold cursor-pointer"
                       >
-                        ดูสลิปหลักฐานใน Google Drive
+                        {receiptUrl.startsWith('data:') ? 'หลักฐานเก็บไว้ในเครื่องแล้ว (โหมด Guest)' : 'ดูสลิปหลักฐานในระบบ'}
                       </a>
                       <button
                         type="button"
                         onClick={() => setReceiptUrl('')}
                         className="text-[10px] text-rose-400 mt-2 hover:underline cursor-pointer"
                       >
-                        ลบและเลือกสลิปใหม่
+                        ลบและเลือกหลักฐานใหม่
                       </button>
                     </div>
                   ) : (
                     <label htmlFor="slip-upload-input" className="cursor-pointer text-center w-full py-2">
-                      <div className="flex justify-center text-zinc-500 mb-2">
+                      <div className="flex justify-center text-zinc-500 mb-2 gap-2">
                         <Paperclip size={22} />
+                        <Sparkles size={20} className="text-emerald-400 animate-bounce" />
                       </div>
                       <p className="text-xs text-zinc-300 font-medium">
-                        ลากรูปภาพสลิปมาวางที่นี่ หรือ <span className="text-emerald-400 hover:underline">เลือกไฟล์ภาพ</span>
+                        ลากรูปภาพสลิป, PDF หรือ Excel มาวางที่นี่ หรือ <span className="text-emerald-400 hover:underline">เลือกไฟล์เพื่ออัปโหลด</span>
                       </p>
-                      <p className="text-[10px] text-zinc-500 mt-1">ขนาดไฟล์ไม่เกิน 10MB (ไฟล์จะจัดเก็บใน Google Drive)</p>
+                      <p className="text-[10px] text-zinc-500 mt-1">ระบบ AI จะช่วยกรอกข้อมูลอัตโนมัติ ไม่ต้องกรอกเองหลายรอบ</p>
                     </label>
                   )}
                 </div>
+
+                {aiSuccessMsg && (
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 px-3.5 py-2 rounded-xl text-xs flex items-center gap-2 animate-fade-in">
+                    <Sparkles size={14} className="text-emerald-400 shrink-0" />
+                    <span className="font-medium">{aiSuccessMsg}</span>
+                  </div>
+                )}
 
                 {uploadError && <p className="text-xs text-rose-400 font-medium mt-1">{uploadError}</p>}
               </div>
